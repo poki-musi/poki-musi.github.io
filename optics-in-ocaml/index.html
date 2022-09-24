@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Sitelen Nasa</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://poki-musi.github.io/style.css">
+    <link rel="stylesheet" href="https://poki-musi.github.io/color/red.css">
+
+        <link rel="stylesheet" href="https://poki-musi.github.io/color/background_dark.css">
+    
+    <link rel="stylesheet" href="https://poki-musi.github.io/font-hack-subset.css">
+
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://poki-musi.github.io" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Sitelen Nasa
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        
+                <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://poki-musi.github.io">blog</a></li>
+            
+                <li><a href="https://poki-musi.github.io/tags">tags</a></li>
+            
+                <li><a href="https://poki-musi.github.io/about">about me</a></li>
+            
+                <li><a href="https://github.com/poki-musi" target="_blank" rel="noopener noreferrer">github</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+    <div class="post">
+        
+    <h1 class="post-title"><a href="https://poki-musi.github.io/optics-in-ocaml/">Existential Optics and OCaml</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2022-09-24
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://poki-musi.github.io/tags/ocaml/">#ocaml</a>&nbsp;
+                <a class="post-tag" href="https://poki-musi.github.io/tags/fp/">#fp</a></span>
+    
+
+        
+        <div class="post-content">
+            <p>First post.</p>
+<p>I wanted basic optics in OCaml. Let's try to implement those.</p>
+<span id="continue-reading"></span>
+<p>I was surprised that nobody seemed to have uploaded any optics packages
+in <code>opam</code>. Sure, there are at least 3 or 4 lens libraries, but they don't include
+prisms. Some even have problems with their polymorphic lenses! As such,
+I've decided that it would be a very interesting experience to investigate how
+optics are implemented, and potentially upload the resulting library to <code>opam</code>
+for everyone else.</p>
+<p>No optics 101 are to be explained here. I expect you at least have a vague
+sense of the more basic types in the family (<code>Iso</code>, <code>Prisms</code>, <code>Lenses</code> and
+<code>Affines</code>/<code>AffineTraverals</code> or whatever they're called). If you want an
+introduction to them, read <a href="https://www.tweag.io/blog/2022-05-05-existential-optics/">this</a> or <a href="https://www.schoolofhaskell.com/school/to-infinity-and-beyond/pick-of-the-week/a-little-lens-starter-tutorial">this</a>.</p>
+<p>Now, in order to implement optics in OCaml, I've decided to rely on an
+alternative representation to the usual two main and popular implementations -
+profunctor optics and the van Laarhoven representation. Existential optics offer
+a simple model, that does not rely too heavily on typeclasses compared to
+the other representations (except in ad-hoc polymorphic composition, which we
+can't do in OCaml anyways). It is also useful in order to understand how the other
+representations are implemented.</p>
+<h1 id="isomorphic-optics">Isomorphic Optics</h1>
+<p>Let us imagine a lens that takes a type <code>s</code> and extracts a part of type <code>a</code> out
+of it. Lenses need to be capable of doing that extraction, but also reversing it
+after in order to update the original value. Unfortuantely, as currently presented,
+that's not possible. Since <code>a</code> is only part of <code>s</code>, we need &quot;the rest of <code>s</code>&quot; to
+rebuild it off <code>a</code>.</p>
+<p>In order to fix this, we can think of this operation as decomposition. We take <code>s</code>,
+and we decompose it into a pair of values of type <code>(a,c)</code>, where <code>c</code> is &quot;the rest of
+<code>s</code>&quot;. Thus, we have a mapping from <code>s</code>'s structure to <code>a,c</code>, and a reverse mapping back to <code>s</code>... that's just an <a href="https://en.wikipedia.org/wiki/Isomorphism">isomorphism</a>.</p>
+
+  <figure class="center" >
+    <img src="iso-lens.png" style="width: 70%" />
+    
+  </figure>
+
+<p>An isomorphism just states that two structures are only different in labelling,
+that is, we can map to each of these structures in both directions as they have the
+same structure anyway. Since our lens holds the mappings, it becomes <em>proof</em> of this
+relation.</p>
+<p>Every optic we'll make here has to hold this property, where the original type and
+the &quot;focused&quot; part alongside some extra information, are just the sides of the same
+coin. The type of this last value could very well be anything so as long as such
+property holds anyway, which is why these types of optics are called <a href="https://wiki.haskell.org/Existential_type">existential</a>.</p>
+<p><del>Unfortunately OCaml doesn't really support existential types</del> Actually yes
+they do, with the usage of first-class modules and GADTs. Big failure from my
+part. Here's the signature for our lens type:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">type (&#39;s, &#39;a) lens </span><span>= Lens : {
+</span><span>  get : </span><span style="color:#b48ead;">&#39;s </span><span>-&gt; </span><span style="color:#b48ead;">&#39;c </span><span>* </span><span style="color:#b48ead;">&#39;a </span><span>;
+</span><span>  set : </span><span style="color:#b48ead;">&#39;c </span><span>* </span><span style="color:#b48ead;">&#39;a </span><span>-&gt; </span><span style="color:#b48ead;">&#39;s </span><span>;
+</span><span>} -&gt; (</span><span style="color:#b48ead;">&#39;s</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>) </span><span style="color:#b48ead;">lens
+</span></code></pre>
+<p>So yeah, our isomorphism requires a mapping from <code>s</code> to <code>a,c</code>, and another that
+goes back. Hence, two functions. <code>set</code>, <code>over</code> and <code>view</code> are relatively simple
+to build from here:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#65737e;">(* Just get the value and extract &#39;a from it. *)
+</span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">view </span><span>(Lens </span><span style="color:#bf616a;">{get; _}</span><span>) </span><span style="color:#bf616a;">s </span><span>= s |&gt; get |&gt; snd
+</span><span>
+</span><span style="color:#65737e;">(* Get the value and update the &#39;a component off (&#39;a,&#39;c), then go back to &#39;s. *)
+</span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">over </span><span>(Lens </span><span style="color:#bf616a;">{get; set}</span><span>) </span><span style="color:#bf616a;">s f </span><span>= value |&gt; get |&gt; (</span><span style="color:#b48ead;">fun </span><span>(</span><span style="color:#bf616a;">c</span><span>, </span><span style="color:#bf616a;">a</span><span>) -&gt; (c, f a)) |&gt; set
+</span><span>
+</span><span style="color:#65737e;">(* Just reuse over, where the modifying function just ignores its argument
+</span><span style="color:#65737e;">   and returns the value we want to update &#39;s with. *)
+</span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">set </span><span style="color:#bf616a;">lens s a </span><span>= over lens s (Fun.const a)
+</span></code></pre>
+<p>Now, <code>Prism</code>s. In case we can extract <code>a</code> from some value of type <code>s</code>, we can trivially
+map <code>s</code> to <code>a</code> and viceversa. However, in case the operation fails, we need to
+conserve information (of type <code>'c</code>) that allows us to rebuild it later. In the
+case of a sumtype, it could be the very value it came from, so that when it is
+reverse mapped, we can return it directly.</p>
+<p>So all we really have to do is use an <code>Either</code> type. It'll hold <code>'a</code> when the
+focus is successful, <code>'c</code> otherwise, and with any of those values were can
+reconstruct how <code>'s</code> was like.</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">type (&#39;s, &#39;a) prism </span><span>= Prism : {
+</span><span>  get : </span><span style="color:#b48ead;">&#39;s </span><span>-&gt; (</span><span style="color:#b48ead;">&#39;c</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>) Either</span><span style="color:#b48ead;">.t </span><span>;
+</span><span>  set : (</span><span style="color:#b48ead;">&#39;c</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>) Either</span><span style="color:#b48ead;">.t </span><span>-&gt; </span><span style="color:#b48ead;">&#39;s </span><span>;
+</span><span>} -&gt; (</span><span style="color:#b48ead;">&#39;s</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>) </span><span style="color:#b48ead;">prism
+</span></code></pre>
+<p>Here's <code>preview</code> and <code>review</code> in terms of this representation:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#65737e;">(* Get the value, and map it to an Option type. *)
+</span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">preview </span><span>(Prism </span><span style="color:#bf616a;">{get; _}</span><span>) </span><span style="color:#bf616a;">v </span><span>= get v |&gt; </span><span style="color:#b48ead;">function </span><span>Left </span><span style="color:#d08770;">_ </span><span>-&gt; None </span><span style="color:#b48ead;">| </span><span>Right </span><span style="color:#bf616a;">v </span><span>-&gt; Some v
+</span><span>
+</span><span style="color:#65737e;">(* Reviewing just means to evaluate the &quot;successful&quot;
+</span><span style="color:#65737e;">   branch in the set function. *)
+</span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">review </span><span>(Prism </span><span style="color:#bf616a;">{set; _}</span><span>) </span><span style="color:#bf616a;">v </span><span>= Right v |&gt; set
+</span></code></pre>
+<p><code>Iso</code> is very trivial in this representation. It is, quite literally, an isomorphism.
+The types <code>s</code> and <code>a</code> are already expected to be the same structurally. Thus, no
+extra information to conserve, thus <code>c</code>'s type here would be <code>unit</code>, or what
+would be the same, such type would not even be included in our signature:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">type (&#39;s, &#39;a) iso </span><span>= Iso : { get : </span><span style="color:#b48ead;">&#39;s </span><span>-&gt; </span><span style="color:#b48ead;">&#39;a </span><span>; set : </span><span style="color:#b48ead;">&#39;a </span><span>-&gt; </span><span style="color:#b48ead;">&#39;s </span><span>} -&gt; (</span><span style="color:#b48ead;">&#39;s</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>) </span><span style="color:#b48ead;">iso
+</span></code></pre>
+<p>Also, the operations <code>from</code> and <code>to_</code> are trivial to implement:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">from </span><span>(Iso </span><span style="color:#bf616a;">{get; _}</span><span>) = get
+</span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">to_ </span><span>(Iso </span><span style="color:#bf616a;">{set; _}</span><span>) = set
+</span></code></pre>
+<p>Last but not least, affines (or better called <code>AffineTraversal</code> or <code>Optional</code>).
+An affine type has a structure like <code>c + b × a</code>. So, not only are we trying to
+focus on a particular case of a sumtype, but <em>also</em> on a piece of a particular case.
+That's kinda why you can call them a combination of prisms and lenses, as you're
+literally combining the means of focusing on both a case AND part of the type.</p>
+<p>So, the representation would just be this:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">type (&#39;s, &#39;a, &#39;b, &#39;c) affine </span><span>= {
+</span><span>  get : </span><span style="color:#b48ead;">&#39;s </span><span>-&gt; (</span><span style="color:#b48ead;">&#39;c</span><span>, </span><span style="color:#b48ead;">&#39;b </span><span>* </span><span style="color:#b48ead;">&#39;a</span><span>) Either</span><span style="color:#b48ead;">.t </span><span>;
+</span><span>  set : (</span><span style="color:#b48ead;">&#39;c</span><span>, </span><span style="color:#b48ead;">&#39;b </span><span>* </span><span style="color:#b48ead;">&#39;a</span><span>) Either</span><span style="color:#b48ead;">.t </span><span>-&gt; </span><span style="color:#b48ead;">&#39;s</span><span>;
+</span><span>}
+</span></code></pre>
+<p>And the affine traversal's <code>preview</code> and <code>over</code> functions would be implemented as
+follows.</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">preview </span><span style="color:#bf616a;">{get; _} v </span><span>= get v |&gt; Either.map </span><span style="color:#bf616a;">~left:</span><span>(Fun.const None) </span><span style="color:#bf616a;">~right:</span><span>snd
+</span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">over </span><span style="color:#bf616a;">{get; set} f v </span><span>=
+</span><span>  get v |&gt; Either.map_right (</span><span style="color:#b48ead;">fun </span><span>(</span><span style="color:#bf616a;">b</span><span>, </span><span style="color:#bf616a;">a</span><span>) -&gt; (b, f a)) |&gt; set v
+</span></code></pre>
+<p>Again, it's kind of a combination of what we did with lenses and prisms. Of
+course, just if you squint a bit.</p>
+<blockquote>
+<p>Do notice that these type signatures do not necessarily require the types of
+these optics to have <code>s</code> and <code>a</code> to be the same in the &quot;forward&quot; and &quot;backward&quot;
+mapping:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">type (&#39;s, &#39;t, &#39;a, &#39;b) lens&#39; </span><span>= Lens : {
+</span><span>  get : </span><span style="color:#b48ead;">&#39;s </span><span>-&gt; (</span><span style="color:#b48ead;">&#39;c</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>) ;
+</span><span>  set : (</span><span style="color:#b48ead;">&#39;c</span><span>, </span><span style="color:#b48ead;">&#39;b</span><span>) -&gt; </span><span style="color:#b48ead;">&#39;t </span><span>;
+</span><span>} -&gt; (</span><span style="color:#b48ead;">&#39;s</span><span>, </span><span style="color:#b48ead;">&#39;t</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>, </span><span style="color:#b48ead;">&#39;b</span><span>) </span><span style="color:#b48ead;">lens
+</span><span>
+</span><span style="color:#b48ead;">type (&#39;s, &#39;a) lens </span><span>= (</span><span style="color:#b48ead;">&#39;s</span><span>, </span><span style="color:#b48ead;">&#39;s</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>) </span><span style="color:#b48ead;">lens</span><span>&#39;
+</span></code></pre>
+<p>This is perfectly fine and fits all our functions.
+It also makes sense under our mental model of isomorphic optics - we are still
+conserving the same shape, we're just transforming the focused part into another
+type. Currently we're working with the restricted version, as it is simply
+easier.</p>
+</blockquote>
+<h1 id="composition-nightmare">Composition Nightmare</h1>
+<p>Of course, one of the beautiful things about optics is its high composability.
+That means we don't need to make a very specific optic for every occasion, but
+rather we make one out of smaller parts. Neat.</p>
+<p>What's so neat is how this has to be implemented in OCaml. Again, no
+typeclasses, no ad-hoc polymorphism. And in order to do composition in these types of
+optics, you <em>still</em> need typeclasses to infer the morphsisms required to fit the optics
+together. Therefore, we... quite literally need to make a function for every pair of
+optic types, manually (which <strong>must</strong> be ordered because the order of composition
+matters, adding more cases to handle).</p>
+<p>They vary from being trivial:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">iso_and_lens
+</span><span>  (Iso </span><span style="color:#bf616a;">{get=get1;set=set1}</span><span>)
+</span><span>  (Lens </span><span style="color:#bf616a;">{get=get2;set=set2}</span><span>)
+</span><span>  =
+</span><span>  </span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">get </span><span style="color:#bf616a;">v </span><span>= get1 v |&gt; get2 </span><span style="color:#b48ead;">in
+</span><span>  </span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">set </span><span style="color:#bf616a;">v </span><span>= set2 v |&gt; set1 </span><span style="color:#b48ead;">in
+</span><span>  Lens { get; set }
+</span></code></pre>
+<p>To:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">compose
+</span><span>  (Affine </span><span style="color:#bf616a;">{get=get1; set=set1}</span><span>)
+</span><span>  (Affine </span><span style="color:#bf616a;">{get=get2; set=set2}</span><span>)
+</span><span>  =
+</span><span>  </span><span style="color:#b48ead;">let open</span><span> Either </span><span style="color:#b48ead;">in
+</span><span>  </span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">get </span><span style="color:#bf616a;">s1 </span><span>= </span><span style="color:#b48ead;">match</span><span> get1 s1 </span><span style="color:#b48ead;">with
+</span><span>    </span><span style="color:#b48ead;">| </span><span>Right (</span><span style="color:#bf616a;">b1</span><span>, </span><span style="color:#bf616a;">s2</span><span>) -&gt;
+</span><span>        </span><span style="color:#b48ead;">begin match</span><span> get2 s2 </span><span style="color:#b48ead;">with
+</span><span>        </span><span style="color:#b48ead;">| </span><span>Left </span><span style="color:#bf616a;">c2 </span><span>-&gt; left (right (b1, c2))
+</span><span>        </span><span style="color:#b48ead;">| </span><span>Right (</span><span style="color:#bf616a;">b2</span><span>, </span><span style="color:#bf616a;">a2</span><span>) -&gt; right ((b1, b2), a2)
+</span><span>        </span><span style="color:#b48ead;">end
+</span><span>    </span><span style="color:#b48ead;">| </span><span>Left </span><span style="color:#bf616a;">c1 </span><span>-&gt;
+</span><span>        c1 |&gt; left |&gt; left
+</span><span>  </span><span style="color:#b48ead;">in
+</span><span>  </span><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">set </span><span>= </span><span style="color:#b48ead;">function
+</span><span>    </span><span style="color:#b48ead;">| </span><span>Right ((</span><span style="color:#bf616a;">b1</span><span>, </span><span style="color:#bf616a;">b2</span><span>), </span><span style="color:#bf616a;">a2</span><span>) -&gt;
+</span><span>        </span><span style="color:#b48ead;">let </span><span style="color:#bf616a;">s2 </span><span>= right (b2, a2) |&gt; set2
+</span><span>        </span><span style="color:#b48ead;">in </span><span>(b1, s2) |&gt; right |&gt; set1
+</span><span>    </span><span style="color:#b48ead;">| </span><span>Left (Right (</span><span style="color:#bf616a;">b1</span><span>, </span><span style="color:#bf616a;">c2</span><span>)) -&gt;
+</span><span>        </span><span style="color:#b48ead;">let </span><span style="color:#bf616a;">s2 </span><span>= left c2 |&gt; set2 </span><span style="color:#b48ead;">in
+</span><span>        (b1, s2) |&gt; right |&gt; set1
+</span><span>    </span><span style="color:#b48ead;">| </span><span>Left (Left </span><span style="color:#bf616a;">c1</span><span>) -&gt;
+</span><span>        c1 |&gt; left |&gt; set1
+</span><span>  </span><span style="color:#b48ead;">in </span><span>Affine {get; set}
+</span></code></pre>
+<p>Yeah, the functions themselves are all about matching the types of the two composed
+optics and the resulting composition. The implementation is boring, so instead
+let us talk about how composition relates to our mental model of isomorphisms.</p>
+<p>If our intent is to focus on the focus of another type, that's just making an optic
+out of the relevant subjacent focuses/optics <code>('a, 'b) t</code> and <code>('b, 'c) t</code>.
+At an user level, there isn't much to think about.</p>
+<p>However, how do the residual types work here? It depends. For <code>Iso</code>s in relation to
+any other optic <code>('s, 'a) t</code>, all we're doing is either mapping <code>'s</code> and <code>'a</code> to
+another type (depending on if we compose from the left or the right, respectively), so
+the residual type is the one contained in the other optic.</p>
+<p>In the case of <code>Prism</code>s, we add a new possibility - or &quot;branch&quot; - to the
+potential isomorphic result we get out of <code>'s</code>. For example, if we were to inspect
+the type of the composition between two <code>Prism</code>s <code>p1 = ('s1, 'a1)</code> and
+<code>p2 = ('a1, 'a2)</code>, we would get:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span>{ get : </span><span style="color:#b48ead;">&#39;s1 </span><span>-&gt; ((</span><span style="color:#b48ead;">&#39;c1</span><span>, </span><span style="color:#b48ead;">&#39;c2</span><span>) Either</span><span style="color:#b48ead;">.t</span><span>, </span><span style="color:#b48ead;">&#39;a2</span><span>) Either</span><span style="color:#b48ead;">.t </span><span>;
+</span><span>  set : ((</span><span style="color:#b48ead;">&#39;c1</span><span>, </span><span style="color:#b48ead;">&#39;c2</span><span>) Either</span><span style="color:#b48ead;">.t</span><span>, </span><span style="color:#b48ead;">&#39;a2</span><span>) Either</span><span style="color:#b48ead;">.t </span><span>-&gt; </span><span style="color:#b48ead;">&#39;s1 </span><span>; }
+</span></code></pre>
+<p>So, the resulting prism has a residual type <code>('c1, 'c2) Either.t</code>, which indicates
+the existence of <em>two</em> failure cases:</p>
+<ul>
+<li>We could fail at getting <code>'a1</code>, so we would get <code>'c1</code> out of the first <code>Prism</code>.</li>
+<li>We could successfuly get <code>'a1</code>, but fail at getting <code>'a2</code>, thus we get <code>'c2</code>.</li>
+</ul>
+<p>In the case of <code>Lens</code>es of type <code>('s, 'a) t</code>, we need to keep the inner, residual part
+<code>'c</code>. If we compose the lens to the left of another optic <code>o</code>, we would have to keep
+<code>'c</code> in every potential decomposition <code>o</code> has. Meanwhile, if the <code>Lens</code> is
+decomposed to the right to another optic, we just separate the type inside the
+&quot;successful&quot; decomposition case according to the lens.</p>
+<p>Let's try to observe how the composition of a prism <code>('s1, 'a1) t</code> and
+lens <code>('a1, 'a2) t</code> works (considering their residual types <code>'c1</code> and
+<code>'c2</code> respectively):</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span>{ get : </span><span style="color:#b48ead;">&#39;s1 </span><span>-&gt; (</span><span style="color:#b48ead;">&#39;c1</span><span>, </span><span style="color:#b48ead;">&#39;c2 </span><span>* </span><span style="color:#b48ead;">&#39;a2</span><span>) Either</span><span style="color:#b48ead;">.t </span><span>;
+</span><span>  set : (</span><span style="color:#b48ead;">&#39;c1</span><span>, </span><span style="color:#b48ead;">&#39;c2 </span><span>* </span><span style="color:#b48ead;">&#39;a2</span><span>) Either</span><span style="color:#b48ead;">.t </span><span>-&gt; </span><span style="color:#b48ead;">&#39;s2 </span><span>; }
+</span></code></pre>
+<p>Curious. It's the exact same signature as a generic affine. We get to add
+a branch, in which the successful branch needs to be split. So the composition
+of affines really can be reasoned as if we were composing a prism, then a lens. Neat.</p>
+<p>Now, all of this doesn't really matter at an user level. Though they might care about the
+explosion of combinations of pairings. Since we don't have ad-hoc polymorphism,
+we can't just use one single operator for optic composition. As an alternative,
+a page was taken off reasonML and scala libraries, where they just do method chaining
+that quite literally describe the composition of which types are combined.
+We can simulate something similar, and also make it relatively easy to type.</p>
+<p>Essentially, every composition function that takes two optics of <code>a</code> and <code>b</code>, and
+composes them in that order, has a signature of <code>a -&gt; b -&gt; c</code>. For each of those
+functions, an alias of two letters of type <code>b -&gt; a -&gt; c</code> is made.
+The inversion of the input is intentional - they're swapped in order to
+facilitate composition through piping. Here's a sample:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">let </span><span style="color:#bf616a;">some_optic </span><span>= some_lens |&gt; la some_affine |&gt; ap some_prism |&gt; ai some_iso
+</span></code></pre>
+<p>And so the letter to the left of the shorthand indicates the optic taken from
+the left, and the letter to the right, the optic we apply from the right.
+Yeah. Simple enough.</p>
+<h1 id="the-twist-villain">The Twist Villain</h1>
+<p>Now, you might think we've escaped what probably was the worst part of this
+whole project. Well, we kinda did actually, but not without yet another curve
+ball!</p>
+<p>Maybe you want generic lenses. Say, lenses over the first component of a tuple
+of two elements:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">let</span><span> _1 = Lens.make
+</span><span>  </span><span style="color:#bf616a;">~get:</span><span>(</span><span style="color:#b48ead;">fun </span><span>(</span><span style="color:#bf616a;">a</span><span>, </span><span style="color:#bf616a;">b</span><span>) -&gt; (b, a))
+</span><span>  </span><span style="color:#bf616a;">~set:</span><span>(</span><span style="color:#b48ead;">fun </span><span>(</span><span style="color:#bf616a;">b</span><span>, </span><span style="color:#bf616a;">a</span><span>) -&gt; (a, b))
+</span></code></pre>
+<p>This doesn't really work because of OCaml's <a href="http://ocamlverse.net/content/weak_type_variables.html">value restriction semantics</a>. In a nutshell and in this case,
+partial application of polymorphic functions that only solve partially (that is, not
+all the type vars get resolved in compile time) become closures with weak types.
+Those get resolved by the compiler once the value gets used anywhere, and uses
+the types that match that situation. Thus, this resulting type is not
+polymorphic in any way, which isn't what we want. We <em>want</em> to make our lens
+generic in the first place.</p>
+<p>How do we solve this? Well, just force the lens to instantiate whenever you
+wanna use a new one:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">_1 </span><span style="color:#bf616a;">() </span><span>= Lens.make
+</span><span>  </span><span style="color:#bf616a;">~get:</span><span>(</span><span style="color:#b48ead;">fun </span><span>(</span><span style="color:#bf616a;">a</span><span>, </span><span style="color:#bf616a;">b</span><span>) -&gt; (b, a))
+</span><span>  </span><span style="color:#bf616a;">~set:</span><span>(</span><span style="color:#b48ead;">fun </span><span>(</span><span style="color:#bf616a;">b</span><span>, </span><span style="color:#bf616a;">a</span><span>) -&gt; (a, b))
+</span></code></pre>
+<p>This is incredibly dumb but... I suppose, it's a fine solution. Here's the lens at
+play:</p>
+<pre data-lang="ocaml" style="background-color:#2b303b;color:#c0c5ce;" class="language-ocaml "><code class="language-ocaml" data-lang="ocaml"><span style="color:#b48ead;">let </span><span style="color:#8fa1b3;">_1_1_1 </span><span style="color:#bf616a;">() </span><span>= _1 </span><span style="color:#d08770;">() </span><span>|&gt; ll (_1 </span><span style="color:#d08770;">()</span><span>) |&gt; ll (_1 </span><span style="color:#d08770;">()</span><span>)
+</span><span style="color:#b48ead;">val </span><span>_1_1_1 : </span><span style="color:#b48ead;">unit </span><span>-&gt; (((</span><span style="color:#b48ead;">&#39;a </span><span>* </span><span style="color:#b48ead;">&#39;b</span><span>) * </span><span style="color:#b48ead;">&#39;c</span><span>) * </span><span style="color:#b48ead;">&#39;d</span><span>, </span><span style="color:#b48ead;">&#39;a</span><span>) </span><span style="color:#b48ead;">lens</span><span>&#39;
+</span></code></pre>
+<p>So yeah. Interesting experience. You may check out the (as of 24/09/22) half-documented project in my
+github, <a href="https://github.com/poki-musi/optics">here</a>. I'll eventually add it to
+<code>opam</code>.</p>
+<p>I leave you all with a rather daunting image of the type signature
+of my previous optics implementation, which unfortunately exposed the internal
+residual types to the user. <a href="https://www.youtube.com/watch?v=fJ0UQDWiS8o">I love types :)</a></p>
+
+  <figure class="center" >
+    <img src="i-love-types.png" alt="Henlo" style="width: 60%" />
+    
+      <figcaption class="center" style="background-color: transparent;">That&#x27;s not the entire type, by the way.</figcaption>
+    
+  </figure>
+
+
+        </div>
+
+        
+    </div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2022
+ Poki</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+</body>
+
+</html>
