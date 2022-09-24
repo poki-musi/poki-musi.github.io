@@ -61,20 +61,16 @@ the "focused" part alongside some extra information, are equivalent up to an
 isomorphism. The type of this last value could very well be anything so as long as such
 property holds anyway, which is why these types of optics are called [existential](https://wiki.haskell.org/Existential_type).
 
-Unfortunately OCaml doesn't really support existential types in the same way, say,
-Haskell does, so we need to make this `c` type explicit in our type signatures
-(this'll be a pattern by the way, sorry). Anyways, let's make a signature of our
-existential lens type:
+~~Unfortunately OCaml doesn't really support existential types~~ Actually yes
+they do, with the usage of first-class modules and GADTs. Big failure from my
+part. Here's the signature for our lens type:
 
 ```ocaml
-type ('s, 'a, 'c) lens = {
+type ('s, 'a) lens = Lens : {
   get : 's -> 'c * 'a ;
   set : 'c * 'a -> 's ;
-}
+} -> ('s, 'a) lens
 ```
-
-> Alternatively, this could be done with modules, and that's what I've tried at
-> first, but at the same time it doesn't change much.
 
 So yeah, our isomorphism requires a mapping from `s` to `a,c`, and another that
 goes back. Hence, two functions. `set`, `over` and `view` are relatively simple
@@ -82,10 +78,10 @@ to build from here:
 
 ```ocaml
 (* Just get the value and extract 'a from it. *)
-let view {get; _} s = s |> get |> snd
+let view (Lens {get; _}) s = s |> get |> snd
 
 (* Get the value and update the 'a component off ('a,'c), then go back to 's. *)
-let over {get; set} s f = value |> get |> (fun (c, a) -> (c, f a)) |> set
+let over (Lens {get; set}) s f = value |> get |> (fun (c, a) -> (c, f a)) |> set
 
 (* Just reuse over, where the modifying function just ignores its argument
    and returns the value we want to update 's with. *)
@@ -103,42 +99,41 @@ focus is successful, `'c` otherwise, and with any of those values were can
 reconstruct how `'s` was like.
 
 ```ocaml
-type ('s, 'a, 'c) prism = {
+type ('s, 'a) prism = Prism : {
   get : 's -> ('c, 'a) Either.t ;
   set : ('c, 'a) Either.t -> 's ;
-}
+} -> ('s, 'a) prism
 ```
 
 Here's `preview` and `review` in terms of this representation:
 
 ```ocaml
 (* Get the value, and map it to an Option type. *)
-let preview {get; _} v = get v |> function Left _ -> None | Right v -> Some v
+let preview (Prism {get; _}) v = get v |> function Left _ -> None | Right v -> Some v
 
 (* Reviewing just means to evaluate the "successful"
    branch in the set function. *)
-let review {set; _} v = Right v |> set
+let review (Prism {set; _}) v = Right v |> set
 ```
 
 `Iso` is very trivial in this representation. It is, quite literally, an isomorphism.
 The types `s` and `a` are already expected to be the same structurally. Thus, no
-extra information to conserve, thus `'c`'s type here would be `unit`.
+extra information to conserve, thus `'c`'s type here would be `unit`, or what
+would be the same, such type would not even be included in our signature:
 
 ```ocaml
-(* In my implementation, 'c is not added though,
-   it is here for educational purposes. *)
-type ('s, 'a, 'c) iso = { get : 's -> 'a ; set : 'a -> 's }
+type ('s, 'a) iso = Iso : { get : 's -> 'a ; set : 'a -> 's } -> ('s, 'a) iso
 ```
 
 Also, the operations `from` and `to_` are trivial to implement:
 
 ```ocaml
-let from {get; _} = get
-let to_ {set; _} = set
+let from (Iso {get; _}) = get
+let to_ (Iso {set; _}) = set
 ```
 
 Last but not least, affines (or better called `AffineTraversal` or `Optional`).
-An affine type its has a structure like `c + b x a`. so, not only are we trying to
+An affine type its has a structure like `c + b × a`. so, not only are we trying to
 focus on a particular case of a sumtype, but *also* on a piece of a particular case.
 That's kinda why you can call them a combination of prisms and lenses, as you're
 literally combining the means of focusing on both a case AND part of the type.
@@ -173,19 +168,20 @@ course, just if you squint a bit.
 > mapping:
 >
 > ```ocaml
-> type ('s, 't, 'a, 'b, 'c) lens' = {
+> type ('s, 't, 'a, 'b) lens' = Lens : {
 >   get : 's -> ('c, 'a) ;
 >   set : ('c, 'b) -> 't ;
-> }
+> } -> ('s, 't, 'a, 'b) lens
 >
-> type ('s, 'a, 'c) lens = ('s, 's, 'a, 'a, 'c) lens'
+> type ('s, 'a) lens = ('s, 's, 'a, 'a) lens'
 > ```
 >
 > This is perfectly fine (it does change some type signatures, notably the
 > function passed to `over` changes from `a -> a` to `a -> b`). It also
 > makes sense under our mental model of isomorphic optics - we are still
 > conserving the same shape, we're just transforming the focused part into another
-> type.
+> type. Currently we're working with the restricted version, as it is simply
+> easier.
 
 # Composition Nightmare
 
@@ -198,33 +194,31 @@ typeclasses, no ad-hoc polymorphism. And in order to do composition in these typ
 optics, you *still* need typeclasses to infer the morphsisms required to fit the optics
 together. Therefore, we... quite literally need to make a function for every pair of
 optic types, manually (which **must** be ordered because the order of composition
-matters).
+matters, adding more cases to handle).
 
 They vary from being trivial:
 
 ```ocaml
 let iso_and_lens
-  ({get=get1;set=set1} : ('a, 'b) iso)
-  ({get=get2;set=set2} : ('b, 'c, 'd) lens)
-  : ('a, 'c, 'd) lens
+  (Iso {get=get1;set=set1})
+  (Lens {get=get2;set=set2})
   =
   let get v = get1 v |> get2 in
   let set v = set2 v |> set1 in
-  { get; set }
+  Lens { get; set }
 ```
 
 To:
 
 ```ocaml
 let compose
-  ({get; set} : ('s1, 's2, 'b1, 'c1) t)
-  ({get=get'; set=set'} : ('s2, 'a2, 'b2, 'c2) t)
-  : ('s1, 'a2, 'b1 * 'b2, ('c1, 'b1 * 'c2) Either.t) t
+  (Affine {get=get1; set=set1})
+  (Affine {get=get2; set=set2})
   =
   let open Either in
-  let get s1 = match get s1 with
+  let get s1 = match get1 s1 with
     | Right (b1, s2) ->
-        begin match get' s2 with
+        begin match get2 s2 with
         | Left c2 -> left (right (b1, c2))
         | Right (b2, a2) -> right ((b1, b2), a2)
         end
@@ -233,97 +227,70 @@ let compose
   in
   let set = function
     | Right ((b1, b2), a2) ->
-        let s2 = right (b2, a2) |> set'
-        in (b1, s2) |> right |> set
+        let s2 = right (b2, a2) |> set2
+        in (b1, s2) |> right |> set1
     | Left (Right (b1, c2)) ->
-        let s2 = left c2 |> set' in
-        (b1, s2) |> right |> set
+        let s2 = left c2 |> set2 in
+        (b1, s2) |> right |> set1
     | Left (Left c1) ->
-        c1 |> left |> set
-  in
-  {get; set}
+        c1 |> left |> set1
+  in Affine {get; set}
 ```
 
-Yeah the functions themselves are all about making the types of the two composed
+Yeah, the functions themselves are all about matching the types of the two composed
 optics and the resulting composition. The implementation is boring, so instead
-let us talk about matching types. Although, the typing wouldn't be so hard if
-it were just about matching inputs with outputs. That is, if our intent is to focus on
-the focus of another type, that's just making an optic out of the relevant subjacent
-focuses/optics `('s1, 'a1, ...) t` and `('s2, 'a2, ...) t`. This resulting optic has
-the signature `('s1, 'a2, ...) t`. However, what should this unknown ellipsis be?
+let us talk about how composition relates to our mental model of isomorphisms.
 
-It depends. For `Iso`s in relation to any other optic `('s,
-'a, ...) t`, all we're doing is either mapping `'s` and `'a` to another type
-(depending on if we compose from the left or the right, respectively), so `...`
-doesn't need to change.
+If our intent is to focus on the focus of another type, that's just making an optic
+out of the relevant subjacent focuses/optics `('a, 'b) t` and `('b, 'c) t`.
+At an user level, there isn't much to think about.
 
-In the case of `Lens`es of type `('s, 'a, 'c) t`, there are some patterns, but
-they're hard to see if we do not look at some samples:
+However, how do the residual types work here? It depends. For `Iso`s in relation to
+any other optic `('s, 'a) t`, all we're doing is either mapping `'s` and `'a` to
+another type (depending on if we compose from the left or the right, respectively), so
+the residual type is the one contained in the other optic.
 
-```ocaml
-val lens_and_prism :
-  ('a, 'b, 'c) lens ->
-  ('b, 'd, 'e) prism ->
-  ('a, 'd, 'c, 'c * 'e) affine
-
-val prism_and_lens :
-  ('a, 'b, 'c) prism ->
-  ('b, 'd, 'e) lens ->
-  ('a, 'd, 'e, 'c) affine
-```
-
-Observe how, in the case of composing lenses from the left of another optic, we
-needed to conserve `'c` into the final optic by adding it to every possible
-decomposition "branch". They can either be `'c * 'd` (successful prism focus) or
-`'c * 'e` (unsuccessful prism focus). In the second case, as we compose the lens
-from the right, we just add a new part to "keep track of" in the resulting lens,
-which naturally results into an affine traversal.
-
-Conversely, when we compose prisms from the right, we're adding a new possible,
-failure branch to the optic, and any parts we were keeping track of in the
-successful branch in the optic to the left have to be added to every branch.
-
-Now you're ready to understand why composing affines works the way it works:
+In the case of `Prism`s, we add a new possibility - or "branch" - to the
+potential isomorphic result we get out of `'s`. For example, if we were to inspect
+the type of the composition between two `Prism`s `p1 = ('s1, 'a1)` and
+`p2 = ('a1, 'a2)`, we would get:
 
 ```ocaml
-val lens_and_affine :
-  ('s1, 'a1, 'c1) lens ->
-  ('a1, 'a2, 'b2, 'c2) affine ->
-  ('s1, 'a2, 'c1 * 'b2, 'c1 * 'c2) affine
-
-val prism_and_affine :
-  ('s1, 's2, 'c1) prism ->
-  ('s2, 'a2, 'b2, 'c2) affine ->
-  ('s1, 'a2, 'b2, ('c1, 'c2) Either.t) affine
+{ get : 's1 -> (('c1, 'c2) Either.t, 'a2) Either.t ;
+  set : (('c1, 'c2) Either.t, 'a2) Either.t -> 's1 ; }
 ```
 
-Again, remember that the third and fourth type slots in out traversal type indicate
-the parts we keep track of any all failure branches, respectively. Then, in the
-former case, all we're doing is adding the residual part of the lens to every
-possible branch in the affine, while in the latter case, we need to add the
-extra branch provided by the prism. Similar logic applies to every other case,
-more or less.
+So, the resulting prism has a residual type `('c1, 'c2) Either.t`, which indicates
+the existence of *two* failure cases:
 
-We wouldn't really need to know all of this garbage if OCaml had existential
-types. At least the user can totally ignore all that, yes? They can just focus
-on the first two types of any given optic, right...?
+* We could fail at getting `'a1`, so we would get `'c1` out of the first `Prism`.
+* We could successfuly get `'a1`, but fail at getting `'a2`, thus we get `'c2`.
 
-{{ figure(
-  src="i-love-types.png",
-  alt="Henlo",
-  style="width: 60%",
-  caption="That's not the entire type, by the way.",
-  caption_style="background-color: transparent;"
-) }}
+In the case of `Lens`es of type `('s, 'a) t`, we need to keep the inner, residual part
+`'c`. If we compose the lens to the left of another optic `o`, we would have to keep
+`'c` in every potential decomposition `o` has. Meanwhile, if the `Lens` is
+decomposed to the right to another optic, we just separate the type inside the
+"successful" decomposition case according to the lens.
 
-[I love types](https://www.youtube.com/watch?v=fJ0UQDWiS8o)! : ) Anyways.
-Now that I brought up the user experience, let's talk about it.
+Let's try to observe how the composition of a prism `('s1, 'a1) t` and
+lens `('a1, 'a2) t` works (considering their residual types `'c1` and
+`'c2` respectively):
 
-Again, no ad-hoc polymorphism, so we can't just use one single operator for optic
-composition. As an alternative, a page was taken off reasonML and scala libraries,
-where they just do method chaining that quite literally describe the composition of
-which types are combined. We can simulate something similar, and also make it
-relatively easy to type.
+```ocaml
+{ get : 's1 -> ('c1, 'c2 * 'a2) Either.t ;
+  set : ('c1, 'c2 * 'a2) Either.t -> 's2 ; }
+```
+
+Curious. It's the exact same signature as a generic affine. We get to add
+a branch, in which the successful branch needs to be split. So the composition
+of affines really can be reasoned as if we were composing a prism, then a lens. Neat.
+
+Now, all of this doesn't really matter at an user level. Though they might care about the
+explosion of combinations of pairings. Since we don't have ad-hoc polymorphism,
+we can't just use one single operator for optic composition. As an alternative,
+a page was taken off reasonML and scala libraries, where they just do method chaining
+that quite literally describe the composition of which types are combined.
+We can simulate something similar, and also make it relatively easy to type.
 
 Essentially, every composition function that takes two optics of `a` and `b`, and
 composes them in that order, has a signature of `a -> b -> c`. For each of those
@@ -335,8 +302,9 @@ facilitate composition through piping. Here's a sample:
 let some_optic = some_lens |> la some_affine |> ap some_prism |> ai some_iso
 ```
 
-And so the letter to the left of the shorthand indicates what must be piped, while the
-letter to the right restricts the type of the optic to pipe into.
+And so the letter to the left of the shorthand indicates the optic taken from
+the left, and the letter to the right, the optic we apply from the right.
+Yeah. Simple enough.
 
 # The Twist Villain
 
@@ -370,13 +338,26 @@ let _1 () = Lens.make
   ~set:(fun (b, a) -> (a, b))
 ```
 
-This is an incredibly dumb but... I suppose, fine solution. Here's the lens at
+This is incredibly dumb but... I suppose, it's a fine solution. Here's the lens at
 play:
 
 ```ocaml
 let _1_1_1 () = _1 () |> ll (_1 ()) |> ll (_1 ())
+val _1_1_1 : unit -> ((('a * 'b) * 'c) * 'd, 'a) lens'
 ```
 
-So yeah. You may check out the (as of 24/09/22) half-documented project in my
+So yeah. Interesting experience. You may check out the (as of 24/09/22) half-documented project in my
 github, [here](https://github.com/poki-musi/optics). I'll eventually add it to
 `opam`.
+
+I leave you all with a rather daunting image of the type signature
+of my previous optics implementation, which unfortunately exposed the internal
+residual types to the user. [I love types :)](https://www.youtube.com/watch?v=fJ0UQDWiS8o)
+
+{{ figure(
+  src="i-love-types.png",
+  alt="Henlo",
+  style="width: 60%",
+  caption="That's not the entire type, by the way.",
+  caption_style="background-color: transparent;"
+) }}
