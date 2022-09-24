@@ -57,8 +57,8 @@ same structure anyway. Since our lens holds the mappings, it becomes *proof* of 
 relation.
 
 Every optic we'll make here has to hold this property, where the original type and
-the "focused" part alongside some extra information, are equivalent up to an
-isomorphism. The type of this last value could very well be anything so as long as such
+the "focused" part alongside some extra information, are just the sides of the same
+coin. The type of this last value could very well be anything so as long as such
 property holds anyway, which is why these types of optics are called [existential](https://wiki.haskell.org/Existential_type).
 
 ~~Unfortunately OCaml doesn't really support existential types~~ Actually yes
@@ -118,7 +118,7 @@ let review (Prism {set; _}) v = Right v |> set
 
 `Iso` is very trivial in this representation. It is, quite literally, an isomorphism.
 The types `s` and `a` are already expected to be the same structurally. Thus, no
-extra information to conserve, thus `'c`'s type here would be `unit`, or what
+extra information to conserve, thus `c`'s type here would be `unit`, or what
 would be the same, such type would not even be included in our signature:
 
 ```ocaml
@@ -133,16 +133,12 @@ let to_ (Iso {set; _}) = set
 ```
 
 Last but not least, affines (or better called `AffineTraversal` or `Optional`).
-An affine type its has a structure like `c + b × a`. so, not only are we trying to
+An affine type has a structure like `c + b × a`. So, not only are we trying to
 focus on a particular case of a sumtype, but *also* on a piece of a particular case.
 That's kinda why you can call them a combination of prisms and lenses, as you're
 literally combining the means of focusing on both a case AND part of the type.
 
-Again, type representation breaks a bit in OCaml, because now we need to somehow
-split a type variable (the `a` from `b x a`) into two parts... and that's just not
-possible. So instead we pass three type parts into the constructor - a `'b` type
-that indicates the parts we need to "track of" in order to rebuild the original
-type, and a type `'c` that indicates all the possible failed branches:
+So, the representation would just be this:
 
 ```ocaml
 type ('s, 'a, 'b, 'c) affine = {
@@ -151,7 +147,7 @@ type ('s, 'a, 'b, 'c) affine = {
 }
 ```
 
-And the affine traversal's `preview` and `over` functions would implemented as
+And the affine traversal's `preview` and `over` functions would be implemented as
 follows.
 
 ```ocaml
@@ -176,9 +172,8 @@ course, just if you squint a bit.
 > type ('s, 'a) lens = ('s, 's, 'a, 'a) lens'
 > ```
 >
-> This is perfectly fine (it does change some type signatures, notably the
-> function passed to `over` changes from `a -> a` to `a -> b`). It also
-> makes sense under our mental model of isomorphic optics - we are still
+> This is perfectly fine and fits all our functions.
+> It also makes sense under our mental model of isomorphic optics - we are still
 > conserving the same shape, we're just transforming the focused part into another
 > type. Currently we're working with the restricted version, as it is simply
 > easier.
