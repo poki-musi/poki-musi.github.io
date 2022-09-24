@@ -1,0 +1,41 @@
+base_url = "https://poki-musi.github.io"
+title = "Sitelen Nasa"
+description = ""
+
+# generate_feed = false
+# feed_filename = "atom.xml"
+
+theme = "terminimal"
+compile_sass = true
+build_search_index = true
+
+taxonomies = [
+    {name = "tags"},
+]
+
+[markdown]
+highlight_code = true
+
+[extra]
+accent_color = "red"
+background_color = "dark"
+
+author = "Poki"
+logo_text = "Sitelen Nasa"
+
+menu_items = [
+    {name = "blog", url = "$BASE_URL"},
+    {name = "tags", url = "$BASE_URL/tags"},
+    {name = "about me", url = "$BASE_URL/about"},
+    # {name = "feed", url = "$BASE_URL/feed"},
+    {name = "github", url = "https://github.com/poki-musi", newtab = true},
+]
+
+# Whether to show links to earlier and later posts
+# on each post page (defaults to true).
+enable_post_view_navigation = true
+
+# The text shown at the bottom of a post,
+# before earlier/later post links.
+# Defaults to "Thanks for reading! Read other posts?"
+post_view_navigation_prompt = "Read more"
