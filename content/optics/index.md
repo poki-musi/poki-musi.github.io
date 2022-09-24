@@ -1,6 +1,6 @@
 ---
 title: "Existential Optics and OCaml"
-date: 2022-09-12
+date: 2022-09-24
 taxonomies:
   tags: [ocaml, fp]
 ---
